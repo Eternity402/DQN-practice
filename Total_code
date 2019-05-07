@@ -1,0 +1,297 @@
+import matplotlib.pyplot as plt
+import tensorflow as tf
+import cv2 
+import gym
+import numpy as np
+import os
+import time
+import random
+
+env = gym.make('CartPole-v0')
+state = env.reset()
+num_actions = env.action_space.n
+state_shape = env.observation_space.shape
+
+class Environment(object):
+    def __init__(self, args, DP):
+        pass
+    
+    def random_action(self):
+        # Return a random action.
+        b = env.action_space.sample()
+        return b
+    
+    def render_worker(self):
+        # If display in your option is true, do rendering. Otherwise, do not.
+        env.render()
+
+    def new_episode(self):
+        # Sart a new episode and return the first state of the new episode.
+        state = env.reset()
+        return state
+    
+    def act(self, inp):
+        # Perform an action which is given by input argument and return the results of acting.
+        return env.step(inp)
+    
+    def ren_close(self):
+        env.close()
+       
+class ReplayMemory(object):
+    def __init__(self, args):
+        self.before_history = np.zeros((1,4))
+        self.action_history = np.zeros((1,2))
+        self.reward_history = np.ones((1,1))
+        self.terminal_history = np.zeros((1,1))
+        self.after_history = np.zeros((1,4))
+        pass
+    
+    def add(self, before, action, after):
+        # Add current_state, action, reward, terminal, (next_state which can be added by your choice). 
+        self.before_history = np.vstack((self.before_history,before))
+        self.action_history = np.vstack((self.action_history,action))
+        self.reward_history = np.vstack((self.reward_history,after[1]))
+        self.terminal_history = np.vstack((self.terminal_history,after[2]))
+        self.after_history = np.vstack((self.after_history,after[0]))
+        if np.shape(self.before_history) == (1000001,4):
+            self.before_history = np.delete(self.before_history,0,0)
+            self.action_history = np.delete(self.after_history,0,0)
+            self.reward_history = np.delete(self.reward_history,0,0)
+            self.terminal_history = np.delete(self.terminal_history,0,0)
+            self.after_history = np.delete(self.after_history,0,0)
+        else:
+            pass
+    
+    def mini_batch(self):
+        # Return a mini_batch whose data are selected according to your sampling method. (such as uniform-random sampling in DQN papers)
+        if self.before_history.shape[0] < 50:
+            index = np.arange(1,self.before_history.shape[0])
+        else:
+            index = np.random.choice(np.arange(1,self.before_history.shape[0]),50)
+        mini_batch_1 = self.before_history[index]
+        mini_batch_2 = self.action_history[index]
+        mini_batch_3 = self.reward_history[index]
+        mini_batch_4 = self.terminal_history[index]
+        mini_batch_5 = self.after_history[index]
+            
+        return mini_batch_1,mini_batch_2,mini_batch_3,mini_batch_4, mini_batch_5
+class DQN(object):
+    def __init__(self,args,sess):
+        self.sess = sess
+        self.discount = 1
+        self.prediction_Q = self.build_network('pred')
+        self.target_Q = self.build_network('target')
+        self.build_optimizer()
+        self.sess.run(tf.global_variables_initializer())
+        
+    
+    def build_network(self, name):
+        # Make your a deep neural network
+        node_n_1 = 16
+        node_n_2 = 2
+        with tf.variable_scope(name,reuse = tf.AUTO_REUSE):
+            if name =='pred':
+                W1 = tf.get_variable('W1',[4,node_n_1])
+                B1 = tf.get_variable('B1',[1])
+                self.input_x = tf.placeholder(dtype = tf.float32, shape = [None,4])
+                L1_1 = tf.add(tf.matmul(self.input_x,W1),B1)
+                L1 = tf.nn.leaky_relu(L1_1)
+                W2 = tf.get_variable('W2',[node_n_1,node_n_2])
+                B2 = tf.get_variable('B2',[1])
+                L2_1 = tf.add(tf.matmul(L1,W2),B2)
+                L2 = tf.nn.leaky_relu(L2_1)
+                self.res_pred = L2
+                self.sess.run(tf.global_variables_initializer())
+            else:
+                W1 = tf.get_variable('W1',[4,node_n_1])
+                B1 = tf.get_variable('B1',[1])
+                self.input_x_2 = tf.placeholder(dtype = tf.float32, shape = [None,4])
+                L1_1 = tf.add(tf.matmul(self.input_x_2,W1),B1)
+                L1 = tf.nn.leaky_relu(L1_1)
+                W2 = tf.get_variable('W2',[node_n_1,node_n_2])
+                B2 = tf.get_variable('B2',[1])
+                L2_1 = tf.add(tf.matmul(L1,W2),B2)
+                L2 = tf.nn.leaky_relu(L2_1)
+                self.res_target = L2
+                self.sess.run(tf.global_variables_initializer())
+        
+        
+    
+    def build_optimizer(self):
+        # Make your optimizer 
+        self.P1_reward = tf.placeholder(dtype = tf.float32, shape = [None, 1])
+        self.played_action = tf.placeholder(dtype = tf.float32, shape = [None, 2])
+        self.target_loss = tf.multiply(tf.expand_dims(tf.multiply(tf.reduce_max(self.res_target,axis = -1),self.discount),1),self.P1_reward) + self.P1_reward
+        self.target_placeholder = tf.placeholder(dtype = tf.float32, shape = [None, 1])
+        self.loss = tf.reduce_mean(tf.square(self.target_placeholder - tf.matmul(tf.multiply(self.res_pred,self.played_action),tf.expand_dims(tf.ones([2]),1))))
+        self.optimizer = tf.train.AdamOptimizer(0.001).minimize(self.loss)
+        self.sess.run(tf.global_variables_initializer())
+    
+    def train_network(self, m1,m2,m3,m4,m5):
+        # Train the prediction_Q network using a mini-batch sampled from the replay memory
+        self.ran_target_loss = sess.run(self.target_loss, feed_dict = {self.input_x_2 : m5, self.P1_reward : m3})
+        #self.prediction_data = sess.run(tf.matmul(tf.multiply(self.res_pred,self.played_action),tf.expand_dims(tf.ones([2]),1)), feed_dict = {self.input_x : m1, self.played_action : m2})
+        #print('target 값 = {}'.format(self.ran_target_loss))
+        #print('prediction 값 = {}'.format(self.prediction_data))
+        sess.run(self.optimizer, feed_dict = {self.input_x : m1, self.played_action : m2, self.target_placeholder : self.ran_target_loss})
+    
+    def update_target_network(self):
+        copy_op = []
+        pred_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='pred')
+        target_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='target')
+        for pred_var, target_var in zip(pred_vars, target_vars):
+            copy_op.append(target_var.assign(pred_var.value()))
+        self.sess.run(copy_op)
+        
+    def target_QQ(self, state):
+        a = sess.run(self.res_target,feed_dict = {self.input_x_2 : state})
+        return a
+    
+    def predict_Q(self, state):
+        a = sess.run(self.res_pred, feed_dict = {self.input_x : state})
+        return a
+
+import os # to save and load
+class Agent(object):
+    def __init__(self, args,sess):
+        self.env = Environment(args, False)
+        self.memory = ReplayMemory(args)
+        self.DQN = DQN(args,sess)
+        self.saver = tf.train.Saver()
+        self.sess = sess
+        pass
+    
+    def select_action(self, epsilon, state):
+        # Select an action according ε-greedy. You need to use a random-number generating function and add a library if necessary.
+        a = random.random()
+        if a < epsilon:
+            if state.size == 4:
+                state = np.expand_dims(state,axis=0)
+            b = np.argmax(self.DQN.predict_Q(state))
+            
+            b= 1-b
+            if b ==0:
+                d = [1.0, 0.0]
+            else:
+                d = [0.0, 1.0]
+            return d, self.env.act(b)
+        else:
+            if state.size == 4:
+                state = np.expand_dims(state,axis=0)
+            b = np.argmax(self.DQN.predict_Q(state))
+            if b ==0:
+                d = [1.0, 0.0]
+            else:
+                d = [0.0, 1.0]
+            return d, self.env.act(b)
+        
+    def network_value(self,state):
+        if state.size == 4:
+                state = np.expand_dims(state,axis=0)
+        b = self.DQN.predict_Q(state)
+        print('NN_result : {} -> {}'.format(state,b))
+    
+    def train(self):
+        # Train your agent which has the neural nets.
+        # Several hyper-parameters are determined by your choice (Options class in the below cell)
+        # Keep epsilon-greedy action selection in your mind
+        val_x = np.array([0])
+        for i in range(1000):
+            a = self.env.new_episode()
+            if i % 50 == 0:
+                print('{}번째 돌아가는중'.format(i))
+            for j in range(200):
+                epsilon = max((500-i)/500,0.1)
+                b, result = self.select_action(epsilon,a)
+                if result[2] ==True:
+                    if i%100 == 99:
+                        print('{}차 episode 종료 : reward = {}'.format(i+1,j))
+                        self.network_value(a)
+                        val_x = np.vstack([val_x,j])
+                    (res_1,res_2,res_3,res_4)=result
+                    result_f = (res_1,0,res_3,res_4)
+                    self.memory.add(a,b,result_f)
+                    break
+                self.memory.add(a,b,result)
+                a = result[0]
+                m1, m2, m3, m4,m5 = self.memory.mini_batch()
+                #print('train 이전 시간 : {} : {} : {}'.format(i,j,datetime.datetime.now().time()))
+                self.DQN.train_network(m1, m2, m3, m4, m5)
+                #print('train 이후 시간 : {} : {} : {}'.format(i,j,datetime.datetime.now().time()))
+                
+                
+            
+            if i%50 == 0:
+                self.DQN.update_target_network()
+        plt.plot(val_x)
+        plt.xlabel('training')
+        plt.show()
+        
+            
+    
+    def play(self):
+        # Test your agent 
+        # When performing test, you can show the environment's screen by rendering,
+        self.env.new_episode()
+        reward=0
+        for i in range(10):
+                a = (self.env.new_episode())
+                for j in range(200):
+                    b, result = self.select_action(0,a)
+                    self.memory.add(a,b,result)
+                    a = result[0]
+                    reward += result[1]
+                    if result[2] ==True:
+                        break
+        print('simulation result : {}'.format(reward))
+            
+    
+    def save(self):
+        checkpoint_dir = 'cartpole'
+        if not os.path.exists(checkpoint_dir):
+            os.mkdir(checkpoint_dir)
+        self.saver.save(self.sess, os.path.join(checkpoint_dir, 'trained_agent'))
+        
+    def load(self):
+        checkpoint_dir = 'cartpole'
+        self.saver.restore(self.sess, os.path.join(checkpoint_dir, 'trained_agent'))
+        
+    def yeah(self):
+        a= self.env.new_episode()
+        for j in range(200):
+            time.sleep(0.03)
+            b, result = self.select_action(0,a)
+            a = result[0]
+            self.env.render_worker()
+            if result[2] == True:
+                break
+                self.env.ren_close()
+        self.env.ren_close()
+    
+    def ran(self):
+        a= self.env.new_episode()
+        for j in range(200):
+            time.sleep(0.2)
+            b, result = self.select_action(1,a)
+            a = result[0]
+            self.env.render_worker()
+            if result[2] == True:
+                break
+                self.env.ren_close()
+        self.env.ren_close()
+import argparse
+parser = argparse.ArgumentParser(description="CartPole")
+parser.add_argument('--env-name', default='CartPole-v0', type=str,
+                    help="Environment")
+
+parser = argparse.ArgumentParser(description="CartPole")
+parser.add_argument('--env-name', default='CartPole-v0', type=str,
+                    help="Environment")
+tf.reset_default_graph()
+with tf.Session() as sess:
+    args = 0
+    myAgent = Agent(args,sess) # It depends on your class implementation
+    sess.run(tf.global_variables_initializer())
+    myAgent.load()
+    myAgent.train()
+    myAgent.save()
